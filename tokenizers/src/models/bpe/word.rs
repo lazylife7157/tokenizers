@@ -210,8 +210,6 @@ impl Word {
             .filter(|symbol| symbol.is_some())
             .map(|symbol| symbol.unwrap())
             .collect();
-
-        println!("Done empty queue!: {:?}\t{:?}", queue, self.symbols);
     }
 
     pub(super) fn get_chars(&self) -> Vec<u32> {
