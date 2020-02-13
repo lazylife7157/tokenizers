@@ -127,20 +127,22 @@ impl Word {
 
     pub(super) fn merge_all(&mut self, merges: &HashMap<Pair, (u32, u32)>, dropout: Option<f32>) {
         let dropout = dropout.unwrap_or(0.0);
-        let mut queue = BinaryHeap::new();
+        let mut queue = BinaryHeap::with_capacity(self.symbols.len());
         let mut skip = Vec::with_capacity(queue.len());
 
-        let mut word = self.symbols.drain(..).map(Some).collect::<Vec<_>>();
-        word.windows(2).enumerate().for_each(|(index, window)| {
-            let pair = (window[0].unwrap().c, window[1].unwrap().c);
-            if let Some(m) = merges.get(&pair) {
-                queue.push(Merge {
-                    pos: index,
-                    rank: m.0,
-                    new_id: m.1,
-                });
-            }
-        });
+        self.symbols
+            .windows(2)
+            .enumerate()
+            .for_each(|(index, window)| {
+                let pair = (window[0].c, window[1].c);
+                if let Some(m) = merges.get(&pair) {
+                    queue.push(Merge {
+                        pos: index,
+                        rank: m.0,
+                        new_id: m.1,
+                    });
+                }
+            });
 
         while let Some(top) = queue.pop() {
             if dropout > 0.0 && thread_rng().gen::<f32>() < dropout {
@@ -149,55 +151,50 @@ impl Word {
                 // Re-insert the skipped elements
                 skip.drain(..).for_each(|s| queue.push(s));
 
-                if word[top.pos].is_some() {
-                    //if let Some(current) = word[top.pos] {
+                if self.symbols[top.pos].len > 0 {
                     // Do nothing if we are the last symbol
-                    if word[top.pos].unwrap().next == -1 {
+                    if self.symbols[top.pos].next == -1 {
                         continue;
                     }
 
                     // Otherwise, let's merge
-                    let next = word[top.pos].unwrap().next as usize;
-                    let right = word[next].take().unwrap();
-                    word[top.pos]
-                        .as_mut()
-                        .unwrap()
-                        .merge_with(&right, top.new_id);
-                    // Update prev on right's next
-                    if right.next > -1 && (right.next as usize) < word.len() {
-                        if let Some(next) = word[right.next as usize].as_mut() {
-                            next.prev = top.pos as isize;
-                        }
+                    let next_pos = self.symbols[top.pos].next as usize;
+                    let right = self.symbols[next_pos];
+                    self.symbols[top.pos].merge_with(&right, top.new_id);
+                    // Tag the right part as removed
+                    self.symbols[next_pos].len = 0;
+
+                    // Update `prev` on the new `next` to the current pos
+                    if right.next > -1 && (right.next as usize) < self.symbols.len() {
+                        self.symbols[right.next as usize].prev = top.pos as isize;
                     }
 
-                    // Update queue with prev
-                    let current = word[top.pos].unwrap();
+                    // Insert the new pair formed with the previous symbol
+                    let current = &self.symbols[top.pos];
                     if current.prev >= 0 {
                         let prev = current.prev as usize;
-                        if let Some(prev_symbol) = word[prev] {
-                            let new_pair = (prev_symbol.c, current.c);
-                            if let Some((rank, new_id)) = merges.get(&new_pair) {
-                                queue.push(Merge {
-                                    pos: prev,
-                                    rank: *rank,
-                                    new_id: *new_id,
-                                });
-                            }
+                        let prev_symbol = self.symbols[prev];
+                        let new_pair = (prev_symbol.c, current.c);
+                        if let Some((rank, new_id)) = merges.get(&new_pair) {
+                            queue.push(Merge {
+                                pos: current.prev as usize,
+                                rank: *rank,
+                                new_id: *new_id,
+                            });
                         }
                     }
 
-                    // Update queue with next
+                    // Insert the new pair formed with the next symbol
                     let next = current.next as usize;
-                    if next < word.len() {
-                        if let Some(next_symbol) = word[next] {
-                            let new_pair = (current.c, next_symbol.c);
-                            if let Some((rank, new_id)) = merges.get(&new_pair) {
-                                queue.push(Merge {
-                                    pos: top.pos,
-                                    rank: *rank,
-                                    new_id: *new_id,
-                                });
-                            }
+                    if next < self.symbols.len() {
+                        let next_symbol = self.symbols[next];
+                        let new_pair = (current.c, next_symbol.c);
+                        if let Some((rank, new_id)) = merges.get(&new_pair) {
+                            queue.push(Merge {
+                                pos: top.pos,
+                                rank: *rank,
+                                new_id: *new_id,
+                            });
                         }
                     }
                 }
@@ -205,11 +202,18 @@ impl Word {
         }
 
         // Filter out the removed symbols
-        self.symbols = word
-            .into_iter()
-            .filter(|symbol| symbol.is_some())
-            .map(|symbol| symbol.unwrap())
-            .collect();
+        let mut i = 0;
+        loop {
+            if self.symbols.len() <= i {
+                break;
+            }
+
+            if self.symbols[i].len == 0 {
+                self.symbols.remove(i);
+            } else {
+                i += 1;
+            }
+        }
     }
 
     pub(super) fn get_chars(&self) -> Vec<u32> {
