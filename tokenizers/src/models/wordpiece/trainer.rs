@@ -35,12 +35,6 @@ impl WordPieceTrainerBuilder {
         self
     }
 
-    /// Set whether to show progress
-    pub fn show_progress(mut self, show: bool) -> Self {
-        self.bpe_trainer_builder = self.bpe_trainer_builder.show_progress(show);
-        self
-    }
-
     /// Set the special tokens
     pub fn special_tokens(mut self, tokens: Vec<String>) -> Self {
         self.bpe_trainer_builder = self.bpe_trainer_builder.special_tokens(tokens);
@@ -106,9 +100,5 @@ impl Trainer for WordPieceTrainer {
 
     fn process_tokens(&self, mut words: &mut HashMap<String, u32>, tokens: Vec<String>) {
         self.bpe_trainer.process_tokens(&mut words, tokens)
-    }
-
-    fn should_show_progress(&self) -> bool {
-        self.bpe_trainer.should_show_progress()
     }
 }

@@ -13,7 +13,6 @@ pub use crate::utils::{
     pad_encodings, truncate_encodings, PaddingParams, PaddingStrategy, TruncationParams,
     TruncationStrategy,
 };
-use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use rayon::prelude::*;
 use std::{
     collections::HashMap,
@@ -62,8 +61,6 @@ pub trait Decoder {
 /// A `Trainer` has the responsibility to train a model. We feed it with lines/sentences
 /// and it returns a `Model` when done.
 pub trait Trainer: Sync {
-    /// Whether we should show progress during the training.
-    fn should_show_progress(&self) -> bool;
     /// The actual training method. This will return a new trained Model as well as a list
     /// of `special_tokens` to be added directly to the tokenizer along with the model.
     fn train(&self, words: HashMap<String, u32>) -> Result<(Box<dyn Model + Sync>, Vec<String>)>;
@@ -411,30 +408,19 @@ impl Tokenizer {
     /// Train a model and replace our current Model, using the given Trainer
     #[allow(clippy::borrowed_box)]
     pub fn train(&mut self, trainer: &Box<dyn Trainer>, files: Vec<String>) -> Result<()> {
-        let progress = MultiProgress::new();
-        let style = ProgressStyle::default_bar()
-            .template("[{elapsed_precise}] {msg:<40!} {wide_bar} {bytes:<9!}/{total_bytes:>9!}");
         let jobs = files
             .into_iter()
             .map(|filename| {
-                let file = File::open(filename.clone())?;
-                let len = file.metadata().map(|c| c.len()).unwrap_or(0);
-                let pbar = progress.add(ProgressBar::new(len));
-                if !trainer.should_show_progress() {
-                    pbar.set_draw_target(ProgressDrawTarget::hidden());
-                }
-                pbar.set_style(style.clone());
-                pbar.set_message(&filename);
-                Ok((file, pbar))
+                let file = File::open(filename)?;
+                Ok(file)
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let handle = std::thread::spawn(move || progress.join().unwrap());
         let results = jobs
             .par_iter()
-            .map(|(file, pbar)| -> Result<HashMap<String, u32>> {
+            .map(|file| -> Result<HashMap<String, u32>> {
                 let mut words = HashMap::new();
-                let mut file = BufReader::new(pbar.wrap_read(file));
+                let mut file = BufReader::new(file);
 
                 let mut buf = String::new();
                 loop {
@@ -454,11 +440,9 @@ impl Tokenizer {
                     }
                 }
 
-                pbar.finish();
                 Ok(words)
             })
             .collect::<Vec<_>>();
-        handle.join().unwrap();
 
         let mut words = HashMap::new();
         for result in results {
